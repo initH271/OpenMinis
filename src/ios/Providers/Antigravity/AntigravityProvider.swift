@@ -401,14 +401,10 @@ final class AntigravityProvider: LLMProvider {
     private func extractUsage(_ json: [String: Any]) -> LLMUsage? {
         let effective = unwrapResponse(json)
         guard let usage = effective["usageMetadata"] as? [String: Any] else { return nil }
-        let prompt = usage["promptTokenCount"] as? Int ?? 0
+        let input = usage["promptTokenCount"] as? Int ?? 0
         let output = usage["candidatesTokenCount"] as? Int ?? 0
-        // Cloud Code (Antigravity) shares Gemini's usageMetadata shape, so the same
-        // promptTokenCount-includes-cached-tokens rule applies here.
-        let cacheRead = (usage["cachedContentTokenCount"] as? Int).flatMap { $0 > 0 ? $0 : nil }
-        let input = cacheRead.map { max(prompt - $0, 0) } ?? prompt
         return LLMUsage(inputTokens: input, outputTokens: output,
-                        cacheCreationInputTokens: nil, cacheReadInputTokens: cacheRead)
+                        cacheCreationInputTokens: nil, cacheReadInputTokens: nil)
     }
 
     private func parseStreamChunk(_ json: [String: Any]) -> [GeminiStreamEvent] {

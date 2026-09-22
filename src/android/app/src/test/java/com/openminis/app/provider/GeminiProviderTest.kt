@@ -411,6 +411,85 @@ class GeminiProviderTest {
         assertEquals(1000, usageChunks[0].usage.latestContextTokens)
     }
 
+    @Test
+    fun `usage folds thoughtsTokenCount into output when total proves separation`() = runBlocking {
+        // Gemini 3.x: totalTokenCount == prompt + candidates + thoughts, i.e. thinking
+        // is NOT inside candidatesTokenCount. Real fixture from gemini-3.8-flash.
+        val responseBody = """
+        {
+            "candidates": [{"content": {"parts": [{"text": "840"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {
+                "promptTokenCount": 44, "candidatesTokenCount": 32,
+                "thoughtsTokenCount": 764, "totalTokenCount": 840
+            }
+        }
+        """.trimIndent()
+
+        server.enqueue(MockResponse().setBody(responseBody))
+        val response = provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "Hi")), null, 1024)
+
+        assertEquals(32 + 764, response.usage?.outputTokens)
+        assertEquals(44, response.usage?.inputTokens)
+    }
+
+    @Test
+    fun `usage does not double count when thoughts are already inside candidates`() = runBlocking {
+        // 2.5-and-earlier fold thinking INTO candidatesTokenCount: the total identity
+        // fails (46+830+766 != 876), so thoughts must NOT be added again.
+        val responseBody = """
+        {
+            "candidates": [{"content": {"parts": [{"text": "ok"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {
+                "promptTokenCount": 46, "candidatesTokenCount": 830,
+                "thoughtsTokenCount": 766, "totalTokenCount": 876
+            }
+        }
+        """.trimIndent()
+
+        server.enqueue(MockResponse().setBody(responseBody))
+        val response = provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "Hi")), null, 1024)
+
+        assertEquals(830, response.usage?.outputTokens)
+    }
+
+    @Test
+    fun `usage chunk without token counts is ignored`() = runBlocking {
+        // Vertex emits a trafficType-only preamble chunk; reporting it as a real
+        // measurement would zero the turn's cumulative cache/context numbers.
+        val sseBody = buildString {
+            appendLine("""data: {"candidates":[{"content":{"parts":[{"text":"Hi"}]}}],"usageMetadata":{"trafficType":"ON_DEMAND"}}""")
+            appendLine("""data: {"candidates":[{"content":{"parts":[{"text":"!"}]}}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":3,"cachedContentTokenCount":8}}""")
+            appendLine()
+        }
+
+        server.enqueue(MockResponse().setBody(sseBody).setHeader("Content-Type", "text/event-stream"))
+
+        val chunks = provider.streamMessage(listOf(LLMMessage(LLMMessage.Role.USER, "Hi")), null, 1024).toList()
+
+        val usageChunks = chunks.filterIsInstance<LLMStreamChunk.Usage>()
+        assertEquals(1, usageChunks.size)
+        assertEquals(2, usageChunks[0].usage.inputTokens) // 10 - 8
+        assertEquals(8, usageChunks[0].usage.cacheReadInputTokens)
+    }
+
+    @Test
+    fun `cache count larger than prompt falls back to the full prompt`() = runBlocking {
+        // Nonsensical payload (cached > prompt): keep the full prompt, matching the
+        // OpenAI/DeepSeek guard, instead of reporting a zero.
+        val responseBody = """
+        {
+            "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
+            "usageMetadata": {"promptTokenCount": 500, "candidatesTokenCount": 10, "cachedContentTokenCount": 600}
+        }
+        """.trimIndent()
+
+        server.enqueue(MockResponse().setBody(responseBody))
+        val response = provider.sendMessage(listOf(LLMMessage(LLMMessage.Role.USER, "Hi")), null, 1024)
+
+        assertEquals(500, response.usage?.inputTokens)
+        assertEquals(600, response.usage?.cacheReadInputTokens)
+    }
+
     // -- Error handling --
 
     @Test(expected = LLMError.InvalidApiKey::class)

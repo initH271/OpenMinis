@@ -177,8 +177,13 @@ struct TokenUsage {
         //   • Agent multi-turn (multiple API calls) → each call's input grows, max is correct
         inputTokens = max(inputTokens, u.inputTokens)
         outputTokens = max(outputTokens, u.outputTokens)
-        cacheCreationTokens = (u.cacheCreationInputTokens ?? 0)
-        cacheReadTokens = (u.cacheReadInputTokens ?? 0)
+        // max() — not assignment — for the cache counters: streaming providers emit
+        // PROGRESSIVE usage chunks and the cache fields only appear in the final one
+        // (measured on Gemini 3.x: 2–4 `usageMetadata` per stream, with
+        // `cachedContentTokenCount` only on the last). With assignment a trailing
+        // partial chunk would erase a hit that was already reported.
+        cacheCreationTokens = max(cacheCreationTokens, u.cacheCreationInputTokens ?? 0)
+        cacheReadTokens = max(cacheReadTokens, u.cacheReadInputTokens ?? 0)
         latestContextTokens = u.inputTokens
             + (u.cacheReadInputTokens ?? 0)
             + (u.cacheCreationInputTokens ?? 0)

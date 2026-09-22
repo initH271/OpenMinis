@@ -536,18 +536,7 @@ final class GeminiProvider: LLMProvider {
     private func extractUsage(_ json: [String: Any]) -> LLMUsage? {
         let effective = unwrapCloudCodeResponse(json)
         guard let usage = effective["usageMetadata"] as? [String: Any] else { return nil }
-        let prompt = usage["promptTokenCount"] as? Int ?? 0
-        let output = usage["candidatesTokenCount"] as? Int ?? 0
-        // Gemini reports implicit/explicit cache hits at `cachedContentTokenCount`
-        // (absent on models without caching → nil, so the row stays hidden).
-        let cacheRead = (usage["cachedContentTokenCount"] as? Int).flatMap { $0 > 0 ? $0 : nil }
-        // Gemini's `promptTokenCount` is the FULL input (cached + fresh), so subtract
-        // the cached portion to keep `inputTokens` fresh-only — same convention as
-        // OpenAI/DeepSeek here, otherwise input+cacheRead double-counts and deflates
-        // the hit rate. Guard: never negative; no cache field → untouched.
-        let input = cacheRead.map { max(prompt - $0, 0) } ?? prompt
-        return LLMUsage(inputTokens: input, outputTokens: output,
-                        cacheCreationInputTokens: nil, cacheReadInputTokens: cacheRead)
+        return GeminiWireFormat.usage(from: usage)
     }
 
     /// Parse a single SSE chunk from streaming response into events.
