@@ -499,9 +499,17 @@ class GeminiProvider(
 
     private fun extractUsage(json: JSONObject): LLMUsage? {
         val usage = json.optJSONObject("usageMetadata") ?: return null
+        val prompt = usage.optInt("promptTokenCount", 0)
+        // Gemini reports cache hits at `cachedContentTokenCount`; promptTokenCount is
+        // the FULL input (cached + fresh), so subtract to keep inputTokens fresh-only
+        // (same convention as OpenAI/DeepSeek). latestContextTokens stays the full prompt.
+        val cacheRead = usage.optInt("cachedContentTokenCount", 0).takeIf { it > 0 }
+        val freshInput = cacheRead?.let { (prompt - it).takeIf { d -> d >= 0 } } ?: prompt
         return LLMUsage(
-            inputTokens = usage.optInt("promptTokenCount", 0),
+            inputTokens = freshInput,
             outputTokens = usage.optInt("candidatesTokenCount", 0),
+            cacheReadInputTokens = cacheRead,
+            latestContextTokens = prompt,
         )
     }
 
